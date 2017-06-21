@@ -53,6 +53,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include "AsyncAudioDecoderRaw.h"
 #include "AsyncAudioDecoderS16.h"
 #include "AsyncAudioDecoderGsm.h"
+#include "AsyncAudioDecoderAmbe.h"
 #ifdef SPEEX_MAJOR
 #include "AsyncAudioDecoderSpeex.h"
 #endif
@@ -119,7 +120,7 @@ using namespace Async;
  *
  ****************************************************************************/
 
-AudioDecoder *AudioDecoder::create(const std::string &name)
+AudioDecoder *AudioDecoder::create(const std::string &name, const std::map<std::string,std::string> &options)
 {
   if (name == "NULL")
   {
@@ -137,21 +138,25 @@ AudioDecoder *AudioDecoder::create(const std::string &name)
   {
     return new AudioDecoderGsm;
   }
+  else if (name == "AMBE")
+  {
+    return AudioDecoderAmbe::create(options);
+  }
 #ifdef SPEEX_MAJOR
   else if (name == "SPEEX")
   {
-    return new AudioDecoderSpeex;
+    return new AudioDecoderSpeex(options);
   }
 #endif
 #ifdef OPUS_MAJOR
   else if (name == "OPUS")
   {
-    return new AudioDecoderOpus;
+    return new AudioDecoderOpus(options);
   }
 #endif
   else
   {
-    return 0;
+    return NULL;
   }
 }
 
@@ -159,19 +164,19 @@ AudioDecoder *AudioDecoder::create(const std::string &name)
 #if 0
 AudioDecoder::AudioDecoder(void)
 {
-  
+
 } /* AudioDecoder::AudioDecoder */
 
 
 AudioDecoder::~AudioDecoder(void)
 {
-  
+
 } /* AudioDecoder::~AudioDecoder */
 
 
 void AudioDecoder::resumeOutput(void)
 {
-  
+
 } /* AudioDecoder::resumeOutput */
 #endif
 
@@ -183,10 +188,16 @@ void AudioDecoder::resumeOutput(void)
  *
  ****************************************************************************/
 
+void AudioDecoder::setOptions(const Options &options) {
+    for(Options::const_iterator it = options.begin(); it != options.end(); ++it) {
+        setOption(it->first,it->second);
+    }
+}
+
 #if 0
 void AudioDecoder::allSamplesFlushed(void)
 {
-  
+
 } /* AudioDecoder::allSamplesFlushed */
 #endif
 
@@ -203,4 +214,3 @@ void AudioDecoder::allSamplesFlushed(void)
 /*
  * This file has not been truncated
  */
-
