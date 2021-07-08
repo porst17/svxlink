@@ -284,7 +284,7 @@ void LinkManager::addLogic(LogicBase *logic)
   for (SinkMap::iterator it=sinks.begin(); it != sinks.end(); ++it)
   {
     AudioPassthrough *connector = new AudioPassthrough;
-    splitter->addSink(connector);
+    splitter->addSink(connector, true);
     AudioSelector *other_selector = (*it).second.selector;
     other_selector->addSource(connector);
     (*it).second.connectors[logic->name()] = connector;
@@ -294,7 +294,7 @@ void LinkManager::addLogic(LogicBase *logic)
   for (SourceMap::iterator it=sources.begin(); it!=sources.end(); ++it)
   {
     AudioPassthrough *connector = new AudioPassthrough;
-    (*it).second.splitter->addSink(connector);
+    (*it).second.splitter->addSink(connector, true);
     selector->addSource(connector);
     sinks[logic->name()].connectors[(*it).first] = connector;
   }
@@ -333,6 +333,13 @@ void LinkManager::addLogic(LogicBase *logic)
       }
     }
   }
+
+  logic_info.received_tg_update_con = logic->receivedTgUpdated.connect(
+      sigc::bind<0>(
+        sigc::mem_fun(*this, &LinkManager::onReceivedTgUpdated), logic));
+  logic_info.received_publish_state_event_con = logic->publishStateEvent.connect(
+      sigc::bind<0>(
+        sigc::mem_fun(*this, &LinkManager::onPublishStateEvent), logic));
 } /* LinkManager::addLogic */
 
 
@@ -349,9 +356,11 @@ void LinkManager::deleteLogic(LogicBase *logic)
   assert(sources.find(logic->name()) != sources.end());
   assert(sinks.find(logic->name()) != sinks.end());
 
-    // Disconnect the idleStateChanged signal that was connected when the
+    // Disconnect the sigc signals that was connected when the
     // logic was first registered.
   logic_info.idle_state_changed_con.disconnect();
+  logic_info.received_tg_update_con.disconnect();
+  logic_info.received_publish_state_event_con.disconnect();
 
     // Delete the logic source splitter and all connections associated with it
   AudioSplitter *splitter = sources[logic->name()].splitter;
@@ -364,7 +373,7 @@ void LinkManager::deleteLogic(LogicBase *logic)
     sink_info.selector->removeSource(connector);
     sink_info.connectors.erase(logic->name());
     splitter->removeSink(connector);
-    delete connector;
+    //delete connector;
   }
   delete splitter;
   sources.erase(logic->name());
@@ -378,7 +387,7 @@ void LinkManager::deleteLogic(LogicBase *logic)
     selector->removeSource(connector);
     const string &source_name = (*cmit).first;
     sources[source_name].splitter->removeSink(connector);
-    delete connector;
+    //delete connector;
   }
   delete selector;
   sinks.erase(logic->name());
@@ -439,7 +448,7 @@ string LinkManager::cmdReceived(LinkRef link, LogicBase *logic,
   LogicPropMap::iterator prop_it = link.logic_props.find(logic->name());
   assert(prop_it != link.logic_props.end());
   LogicProperties &logic_props = prop_it->second;
-  if (subcmd == "0") // Disconnecting Link1 <-X-> Link2
+  if (subcmd == "") // Disconnecting Link1 <-X-> Link2
   {
     if (!link.is_activated)
     {
@@ -452,25 +461,112 @@ string LinkManager::cmdReceived(LinkRef link, LogicBase *logic,
     }
     ss << logic_props.announcement_name << "\"";
   }
-  else if (subcmd == "1") // Connecting Logic1 <---> Logic2 (two ways)
+  else //if (subcmd == "1") // Connecting Logic1 <---> Logic2 (two ways)
   {
     if (!link.is_activated)
     {
       activateLink(link);
       ss << "activating_link \"";
+      ss << logic_props.announcement_name + "\"";
     }
-    else
-    {
-      ss << "link_already_active \"";
-    }
-    ss << logic_props.announcement_name + "\"";
+    //else
+    //{
+    //  ss << "link_already_active \"";
+    //}
+    //ss << logic_props.announcement_name + "\"";
+    sendCmdToLogics(link, logic, subcmd);
   }
-  else
-  {
-    ss << "unknown_command " << logic_props.cmd << subcmd;
-  }
+  //else
+  //{
+  //  ss << "unknown_command " << logic_props.cmd << subcmd;
+  //}
   return ss.str();
 } /* LinkManager::cmdReceived */
+
+
+LogicBase *LinkManager::currentTalkerFor(const std::string& logic_name)
+{
+  AudioSelector *selector = sinks[logic_name].selector;
+  AudioSource *selected = selector->selectedSource();
+  const ConMap& con_map = sinks[logic_name].connectors;
+  for (ConMap::const_iterator it = con_map.begin(); it != con_map.end(); ++it)
+  {
+    if (it->second == selected)
+    {
+      //cout << "### Selected source: " << it->first << endl;
+      return logic_map[it->first].logic;
+    }
+  }
+  return 0;
+} /* LinkManager::currentTalkerFor */
+
+
+void LinkManager::playFile(LogicBase *src_logic, const std::string& path)
+{
+  const Async::AudioSelector *selector = sinks[src_logic->name()].selector;
+  const ConMap& con_map = sinks[src_logic->name()].connectors;
+  for (ConMap::const_iterator it = con_map.begin(); it != con_map.end(); ++it)
+  {
+    const std::string& logic_name = it->first;
+    const Async::AudioSource *con = it->second;
+    LogicBase *logic = logic_map[logic_name].logic;
+    if ((logic != src_logic) && (selector->autoSelectEnabled(con)))
+    {
+      logic->playFile(path);
+    }
+  }
+} /* LinkManager::playFile */
+
+
+void LinkManager::playSilence(LogicBase *src_logic, int length)
+{
+  const Async::AudioSelector *selector = sinks[src_logic->name()].selector;
+  const ConMap& con_map = sinks[src_logic->name()].connectors;
+  for (ConMap::const_iterator it = con_map.begin(); it != con_map.end(); ++it)
+  {
+    const std::string& logic_name = it->first;
+    const Async::AudioSource *con = it->second;
+    LogicBase *logic = logic_map[logic_name].logic;
+    if ((logic != src_logic) && (selector->autoSelectEnabled(con)))
+    {
+      logic->playSilence(length);
+    }
+  }
+} /* LinkManager::playSilence */
+
+
+void LinkManager::playTone(LogicBase *src_logic, int fq, int amp, int len)
+{
+  const Async::AudioSelector *selector = sinks[src_logic->name()].selector;
+  const ConMap& con_map = sinks[src_logic->name()].connectors;
+  for (ConMap::const_iterator it = con_map.begin(); it != con_map.end(); ++it)
+  {
+    const std::string& logic_name = it->first;
+    const Async::AudioSource *con = it->second;
+    LogicBase *logic = logic_map[logic_name].logic;
+    if ((logic != src_logic) && (selector->autoSelectEnabled(con)))
+    {
+      logic->playTone(fq, amp, len);
+    }
+  }
+} /* LinkManager::playTone */
+
+
+void LinkManager::playDtmf(LogicBase *src_logic, const std::string& digits, int amp, int len)
+{
+  const Async::AudioSelector *selector = sinks[src_logic->name()].selector;
+  const ConMap& con_map = sinks[src_logic->name()].connectors;
+  for (ConMap::const_iterator it = con_map.begin(); it != con_map.end(); ++it)
+  {
+    const std::string& logic_name = it->first;
+    const Async::AudioSource *con = it->second;
+    LogicBase *logic = logic_map[logic_name].logic;
+    if ((logic != src_logic) && (selector->autoSelectEnabled(con)))
+    {
+      logic->playDtmf(digits, amp, len);
+    }
+  }
+} /* LinkManager::playTone */
 
 
 
@@ -487,6 +583,17 @@ string LinkManager::cmdReceived(LinkRef link, LogicBase *logic,
  * Private member functions
  *
  ****************************************************************************/
+
+LinkManager::~LinkManager(void)
+{
+  LogicMap::iterator it = logic_map.begin();
+  while (it != logic_map.end())
+  {
+    deleteLogic(it->second.logic);
+    it = logic_map.begin();
+  }
+} /* LinkManager::~LinkManager */
+
 
 /**
  * @brief Find out which logics that should be connected
@@ -674,6 +781,24 @@ void LinkManager::deactivateLink(Link &link)
 } /* LinkManager::deactivateLink */
 
 
+void LinkManager::sendCmdToLogics(Link& link, LogicBase* src_logic,
+                                  const std::string& cmd)
+{
+  for (LogicPropMap::iterator it = link.logic_props.begin();
+       it != link.logic_props.end(); ++it)
+  {
+    const string &logic_name = (*it).first;
+    LogicMap::iterator lmit = logic_map.find(logic_name);
+    assert(lmit != logic_map.end());
+    LogicBase *logic = (*lmit).second.logic;
+    if (logic != src_logic)
+    {
+      logic->remoteCmdReceived(src_logic, cmd);
+    }
+  }
+} /* LinkManager::sendCmdToLogics */
+
+
 #if 0
 bool LinkManager::isConnected(const string& source_name,
       	                      const string& sink_name)
@@ -801,6 +926,46 @@ void LinkManager::checkTimeoutTimer(Link &link)
   }
 } /* LinkManager::checkTimeoutTimer */
 
+
+void LinkManager::onReceivedTgUpdated(LogicBase *src_logic, uint32_t tg)
+{
+  //cout << "### LinkManager::onReceivedTgUpdated: logic=" << src_logic->name()
+  //     << "  tg=" << tg << endl;
+  const Async::AudioSelector *selector = sinks[src_logic->name()].selector;
+  const ConMap& con_map = sinks[src_logic->name()].connectors;
+  for (ConMap::const_iterator it = con_map.begin(); it != con_map.end(); ++it)
+  {
+    const std::string& logic_name = it->first;
+    const Async::AudioSource *con = it->second;
+    LogicBase *logic = logic_map[logic_name].logic;
+    if ((logic != src_logic) && (selector->autoSelectEnabled(con)))
+    {
+      logic->remoteReceivedTgUpdated(src_logic, tg);
+    }
+  }
+} /* LinkManager::onReceivedTgUpdated */
+
+
+void LinkManager::onPublishStateEvent(LogicBase *src_logic,
+    const std::string& event_name, const std::string& msg)
+{
+  //cout << "### LinkManager::onPublishStateEvent: logic=" << src_logic->name()
+  //     << "  event_name=" << event_name
+  //     << "  msg=" << msg
+  //     << endl;
+  const Async::AudioSelector *selector = sinks[src_logic->name()].selector;
+  const ConMap& con_map = sinks[src_logic->name()].connectors;
+  for (ConMap::const_iterator it = con_map.begin(); it != con_map.end(); ++it)
+  {
+    const std::string& logic_name = it->first;
+    const Async::AudioSource *con = it->second;
+    LogicBase *logic = logic_map[logic_name].logic;
+    if ((logic != src_logic) && (selector->autoSelectEnabled(con)))
+    {
+      logic->remoteReceivedPublishStateEvent(src_logic, event_name, msg);
+    }
+  }
+} /* LinkManager::onReceivedTgUpdated */
 
 
 /*

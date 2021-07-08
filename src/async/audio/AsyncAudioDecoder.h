@@ -35,8 +35,8 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  ****************************************************************************/
 
 #include <string>
-#include <map>
 #include <sigc++/sigc++.h>
+#include <map>
 
 
 /****************************************************************************
@@ -111,13 +111,27 @@ namespace Async
 
 This is the base class for an audio decoder.
 */
-class AudioDecoder : public AudioSource, virtual public sigc::trackable
+class AudioDecoder : public AudioSource, public virtual sigc::trackable
 {
   public:
+    /**
+     * @brief   Check if a specific decoder is available
+     * @param   name The name of the decoder to look for
+     */
+    static bool isAvailable(const std::string &name);
+
+    /**
+     * @brief   Create a new decoder of the specified type
+     * @param   name The name of the decoder to create
+     */
     typedef std::map<std::string,std::string> Options;
-
+    
+    /**
+     * @brief   Create a new decoder of the specified type
+     * @param   name The name of the decoder to create
+     */
     static AudioDecoder *create(const std::string &name, const Options &options);
-
+    
     /**
      * @brief 	Default constuctor
      */
@@ -133,6 +147,13 @@ class AudioDecoder : public AudioSource, virtual public sigc::trackable
      * @returns Return the name of the codec
      */
     virtual const char *name(void) const = 0;
+  
+    /**
+     * @brief 	Set an option for the decoder
+     * @param 	name The name of the option
+     * @param 	value The value of the option
+     */
+    virtual void setOption(const std::string &name, const std::string &value) {}
 
     /**
      * @brief Print codec parameter settings
@@ -167,20 +188,6 @@ class AudioDecoder : public AudioSource, virtual public sigc::trackable
     
 
   protected:
-    /**
-     * @brief 	Set an option for the decoder during initialization
-     * @param 	name The name of the option
-     * @param 	value The value of the option
-     */
-    virtual void setOption(const std::string &name, const std::string &value) {}
-
-    /**
-     * @brief 	Set all option for the decoder during initialization
-     * @param 	name The name of the option
-     * @param 	value The value of the option
-     */
-    virtual void setOptions(const Options &options);
-
     /**
      * @brief The registered sink has flushed all samples
      *

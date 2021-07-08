@@ -6,7 +6,7 @@
 
 \verbatim
 RemoteTrx - A remote receiver for the SvxLink server
-Copyright (C) 2003-2010 Tobias Blomberg / SM0SVX
+Copyright (C) 2003-2018 Tobias Blomberg / SM0SVX
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -136,9 +136,10 @@ NetUplink::NetUplink(Config &cfg, const string &name, Rx *rx, Tx *tx,
   heartbeat_timer->expired.connect(mem_fun(*this, &NetUplink::heartbeat));
 
     // FIXME: Shouldn't we use the updates directly from the receiver instead?
-  siglev_check_timer = new Timer(1000, Timer::TYPE_PERIODIC);
-  siglev_check_timer->setEnable(true);
-  siglev_check_timer->expired.connect(mem_fun(*this, &NetUplink::checkSiglev));
+    // Why is this even here?!
+  //siglev_check_timer = new Timer(1000, Timer::TYPE_PERIODIC);
+  //siglev_check_timer->setEnable(true);
+  //siglev_check_timer->expired.connect(mem_fun(*this, &NetUplink::checkSiglev));
   
 } /* NetUplink::NetUplink */
 
@@ -154,7 +155,7 @@ NetUplink::~NetUplink(void)
   delete server;
   delete heartbeat_timer;
   delete mute_tx_timer;
-  delete siglev_check_timer;
+  //delete siglev_check_timer;
 } /* NetUplink::~NetUplink */
 
 
@@ -202,7 +203,7 @@ bool NetUplink::initialize(void)
     mute_tx_timer->expired.connect(mem_fun(*this, &NetUplink::unmuteTx));
   }
   
-  server = new TcpServer(listen_port);
+  server = new TcpServer<>(listen_port);
   server->clientConnected.connect(mem_fun(*this, &NetUplink::clientConnected));
   server->clientDisconnected.connect(
       mem_fun(*this, &NetUplink::clientDisconnected));
@@ -510,6 +511,23 @@ void NetUplink::handleMsg(Msg *msg)
       break;
     }
     
+    case MsgSetRxFq::TYPE:
+    {
+      MsgSetRxFq *fq_msg = reinterpret_cast<MsgSetRxFq*>(msg);
+      cout << rx->name() << ": SetRxFq(" << fq_msg->fq() << ")\n";
+      rx->setFq(fq_msg->fq());
+      break;
+    }
+
+    case MsgSetRxModulation::TYPE:
+    {
+      MsgSetRxModulation *mod_msg = reinterpret_cast<MsgSetRxModulation*>(msg);
+      cout << rx->name() << ": SetRxModulation("
+           << Modulation::toString(mod_msg->modulation()) << ")\n";
+      rx->setModulation(mod_msg->modulation());
+      break;
+    }
+
     case MsgSetMuteState::TYPE:
     {
       MsgSetMuteState *mute_msg = reinterpret_cast<MsgSetMuteState*>(msg);
@@ -552,30 +570,30 @@ void NetUplink::handleMsg(Msg *msg)
     case MsgSendDtmf::TYPE:
     {
       MsgSendDtmf *dtmf_msg = reinterpret_cast<MsgSendDtmf *>(msg);
-      tx->sendDtmf(dtmf_msg->digits());
+      tx->sendDtmf(dtmf_msg->digits(), dtmf_msg->duration());
       break;
     }
     
     case MsgRxAudioCodecSelect::TYPE:
     {
-      MsgRxAudioCodecSelect *codec_msg =
+      MsgRxAudioCodecSelect *codec_msg = 
           reinterpret_cast<MsgRxAudioCodecSelect *>(msg);
       if (audio_enc != 0)
       {
-	rx_splitter->removeSink(audio_enc);
-	delete audio_enc;
+	    rx_splitter->removeSink(audio_enc);
+	    delete audio_enc;
       }
-
+    
       MsgRxAudioCodecSelect::Opts opts;
-      codec_msg->options(opts);
-      MsgRxAudioCodecSelect::Opts::const_iterator it;
+	  codec_msg->options(opts);
       map<string,string> enc_options;
-      for (it=opts.begin(); it!=opts.end(); ++it)
-      {
-        enc_options[(*it).first] = (*it).second;
-      }
-
-      audio_enc = AudioEncoder::create(codec_msg->name(),enc_options);
+	  MsgRxAudioCodecSelect::Opts::const_iterator it;
+	  for (it=opts.begin(); it!=opts.end(); ++it)
+	  {
+	    enc_options[(*it).first] = (*it).second;
+	  }
+  
+      audio_enc = AudioEncoder::create(codec_msg->name(), enc_options);
       if (audio_enc != 0)
       {
         audio_enc->writeEncodedSamples.connect(
@@ -583,12 +601,10 @@ void NetUplink::handleMsg(Msg *msg)
         audio_enc->flushEncodedSamples.connect(
                 mem_fun(*audio_enc, &AudioEncoder::allEncodedSamplesFlushed));
         //audio_enc->registerSource(rx);
-	rx_splitter->addSink(audio_enc);
+	    rx_splitter->addSink(audio_enc);
         cout << name << ": Using CODEC \"" << audio_enc->name()
              << "\" to encode RX audio\n";
-
-
-	audio_enc->printCodecParams();
+		audio_enc->printCodecParams();
       }
       else
       {
@@ -597,23 +613,21 @@ void NetUplink::handleMsg(Msg *msg)
       }
       break;
     }
-
+    
     case MsgTxAudioCodecSelect::TYPE:
     {
-      MsgTxAudioCodecSelect *codec_msg =
+      MsgTxAudioCodecSelect *codec_msg = 
           reinterpret_cast<MsgTxAudioCodecSelect *>(msg);
       delete audio_dec;
-
-      MsgRxAudioCodecSelect::Opts opts;
-      codec_msg->options(opts);
-      MsgTxAudioCodecSelect::Opts::const_iterator it;
       map<string,string> dec_options;
-      for (it=opts.begin(); it!=opts.end(); ++it)
-      {
-        dec_options[(*it).first] = (*it).second;
-      }
-
-      audio_dec = AudioDecoder::create(codec_msg->name(),dec_options);
+ 	  MsgRxAudioCodecSelect::Opts opts;
+	  codec_msg->options(opts);
+	  MsgTxAudioCodecSelect::Opts::const_iterator it;
+	  for (it=opts.begin(); it!=opts.end(); ++it)
+	  {
+	    dec_options[(*it).first] = (*it).second;
+	  }     
+      audio_dec = AudioDecoder::create(codec_msg->name(), dec_options);
       if (audio_dec != 0)
       {
         audio_dec->registerSink(fifo);
@@ -621,9 +635,15 @@ void NetUplink::handleMsg(Msg *msg)
             mem_fun(*this, &NetUplink::allEncodedSamplesFlushed));
         cout << name << ": Using CODEC \"" << audio_dec->name()
              << "\" to decode TX audio\n";
-
-
-      audio_dec->printCodecParams();
+	
+	MsgRxAudioCodecSelect::Opts opts;
+	codec_msg->options(opts);
+	MsgTxAudioCodecSelect::Opts::const_iterator it;
+	for (it=opts.begin(); it!=opts.end(); ++it)
+	{
+	  audio_dec->setOption((*it).first, (*it).second);
+	}
+	audio_dec->printCodecParams();
       }
       else
       {
@@ -652,10 +672,36 @@ void NetUplink::handleMsg(Msg *msg)
       }
       break;
     } 
+
+    case MsgTransmittedSignalStrength::TYPE:
+    {
+      MsgTransmittedSignalStrength *siglev_msg =
+        reinterpret_cast<MsgTransmittedSignalStrength *>(msg);
+      tx->setTransmittedSignalStrength(siglev_msg->sqlRxId(),
+                                       siglev_msg->signalStrength());
+      break;
+    }
     
+    case MsgSetTxFq::TYPE:
+    {
+      MsgSetTxFq *fq_msg = reinterpret_cast<MsgSetTxFq*>(msg);
+      cout << tx->name() << ": SetTxFq(" << fq_msg->fq() << ")\n";
+      tx->setFq(fq_msg->fq());
+      break;
+    }
+
+    case MsgSetTxModulation::TYPE:
+    {
+      MsgSetTxModulation *mod_msg = reinterpret_cast<MsgSetTxModulation*>(msg);
+      cout << tx->name() << ": SetTxModulation("
+           << Modulation::toString(mod_msg->modulation()) << ")\n";
+      tx->setModulation(mod_msg->modulation());
+      break;
+    }
+
     default:
       cerr << "*** ERROR: Unknown TCP message received in NetUplink "
-           << name << ". type=" << msg->type() << ", tize="
+           << name << ". type=" << msg->type() << ", size="
            << msg->size() << endl;
       break;
   }
@@ -672,6 +718,7 @@ void NetUplink::sendMsg(Msg *msg)
     {
       cerr << "*** ERROR: TCP transmit error in NetUplink \"" << name
            << "\": " << strerror(errno) << ".\n";
+      forceDisconnect();
     }
     else if (written != static_cast<int>(msg->size()))
     {
@@ -792,10 +839,12 @@ void NetUplink::heartbeat(Timer *t)
 } /* NetTrxTcpClient::heartbeat */
 
 
+#if 0
 void NetUplink::checkSiglev(Timer *t)
 {
   squelchOpen(rx->squelchIsOpen());
 } /* NetUplink::checkSiglev */
+#endif
 
 
 void NetUplink::unmuteTx(Timer *t)

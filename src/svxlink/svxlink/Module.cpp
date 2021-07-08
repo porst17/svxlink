@@ -71,15 +71,7 @@ bool Module::initialize(void)
     return false;
   }
 
-  string id_str;
-  if (!cfg().getValue(cfgName(), "ID", id_str))
-  {
-    cerr << "*** ERROR: Config variable " << cfgName()
-      	 << "/ID not set\n";
-    return false;
-  }
-  m_id = atoi(id_str.c_str());
-
+  cfg().getValue(cfgName(), "ID", m_id);
   cfg().getValue(cfgName(), "NAME", m_name);
   
   string timeout_str;
@@ -99,7 +91,9 @@ bool Module::initialize(void)
     cfg().getValue(cfgName(), *cfgit, value);
     setEventVariable(var, value);
   }
-  
+
+  cfg().valueUpdated.connect(sigc::mem_fun(*this, &Module::cfgUpdated));
+
   return true;
   
 } /* Module::initialize */
@@ -274,6 +268,20 @@ bool Module::squelchIsOpen(void)
 } /* Module::squelchIsOpen */
 
 
+void Module::cfgUpdated(const std::string& section, const std::string& tag)
+{
+  if (section == cfgName())
+  {
+    std::string value;
+    if (cfg().getValue(cfgName(), tag, value))
+    {
+      setEventVariable(name() + "::CFG_" + tag, value);
+      processEvent("config_updated CFG_" + tag + " \"" + value + "\"");
+    }
+  }
+} /* Module::cfgUpdated */
+
+
 bool Module::isWritingMessage(void)
 {
   return logic()->isWritingMessage();
@@ -288,4 +296,6 @@ void Module::moduleTimeout(Timer *t)
 } /* ModuleParrot::moduleTimeout */
 
 
-
+/*
+ * This file has not been truncated
+ */

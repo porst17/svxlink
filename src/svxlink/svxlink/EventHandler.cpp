@@ -6,7 +6,7 @@
 
 \verbatim
 SvxLink - A Multi Purpose Voice Services System for Ham Radio Use
-Copyright (C) 2003-2015 Tobias Blomberg / SM0SVX
+Copyright (C) 2003-2019 Tobias Blomberg / SM0SVX
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -55,7 +55,6 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  ****************************************************************************/
 
 #include "EventHandler.h"
-#include "Logic.h"
 #include "Module.h"
 
 
@@ -119,20 +118,20 @@ using namespace Async;
  ****************************************************************************/
 
 
-EventHandler::EventHandler(const string& event_script, Logic *logic)
-  : event_script(event_script), logic(logic), interp(0)
+EventHandler::EventHandler(const string& event_script, const string& logic_name)
+  : event_script(event_script), logic_name(logic_name), interp(0)
 {
   interp = Tcl_CreateInterp();
   if (interp == 0)
   {
     cerr << "*** ERROR: Could not create TCL interpreter for logic "
-         << logic->name() << "\n";
+         << logic_name << "\n";
     return;
   }
   
   if (Tcl_Init(interp) != TCL_OK)
   {
-    cerr << event_script << " in logic " << logic->name() << ": "
+    cerr << event_script << " in logic " << logic_name << ": "
          << Tcl_GetStringResult(interp) << endl;
     Tcl_DeleteInterp(interp);
     interp = 0;
@@ -150,6 +149,8 @@ EventHandler::EventHandler(const string& event_script, Logic *logic)
                     this, NULL);
   Tcl_CreateCommand(interp, "playDtmf", playDtmfHandler, this, NULL);
   Tcl_CreateCommand(interp, "injectDtmf", injectDtmfHandler, this, NULL);
+  Tcl_CreateCommand(interp, "setConfigValue", setConfigValueHandler,
+                    this, NULL);
 
   setVariable("script_path", event_script);
 
@@ -179,7 +180,7 @@ bool EventHandler::initialize(void)
   
   if (Tcl_EvalFile(interp, event_script.c_str()) != TCL_OK)
   {
-    cerr << event_script << " in logic " << logic->name() << ": "
+    cerr << event_script << " in logic " << logic_name << ": "
          << Tcl_GetStringResult(interp) << endl;
     return false;
   }
@@ -200,7 +201,7 @@ void EventHandler::setVariable(const string& name, const string& value)
   if (Tcl_SetVar(interp, name.c_str(), value.c_str(), TCL_LEAVE_ERR_MSG)
   	== NULL)
   {
-    cerr << event_script << " in logic " << logic->name() << ": "
+    cerr << event_script << " in logic " << logic_name << ": "
          << Tcl_GetStringResult(interp) << endl;
   }
   Tcl_Release(interp);
@@ -219,7 +220,7 @@ bool EventHandler::processEvent(const string& event)
   if (Tcl_Eval(interp, (event + ";").c_str()) != TCL_OK)
   {
     cerr << "*** ERROR: Unable to handle event: " << event
-      	 << " in logic " << logic->name() << " ("
+         << " in logic " << logic_name << " ("
          << Tcl_GetStringResult(interp) << ")" << endl;
     success = false;
   }
@@ -440,6 +441,27 @@ int EventHandler::injectDtmfHandler(ClientData cdata, Tcl_Interp *irp,
 
   return TCL_OK;
 } /* EventHandler::injectDtmfHandler */
+
+
+int EventHandler::setConfigValueHandler(ClientData cdata, Tcl_Interp *irp,
+                                        int argc, const char *argv[])
+{
+  if(argc != 4)
+  {
+    static char msg[] = "Usage: setConfigValue <section> <tag> <value>";
+    Tcl_SetResult(irp, msg, TCL_STATIC);
+    return TCL_ERROR;
+  }
+  string section(argv[1]);
+  string tag(argv[2]);
+  string value(argv[3]);
+  //std::cout << "### EventHandler::setConfigValueHandler: " << section << "/"
+  //          << tag << "=" << value << std::endl;
+  EventHandler *self = static_cast<EventHandler *>(cdata);
+  self->setConfigValue(section, tag, value);
+
+  return TCL_OK;
+} /* EventHandler::setConfigValueHandler */
 
 
 /*

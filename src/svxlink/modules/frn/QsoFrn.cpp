@@ -129,7 +129,7 @@ using namespace FrnUtils;
 
 QsoFrn::QsoFrn(ModuleFrn *module)
   : init_ok(false)
-  , tcp_client(new TcpClient(TCP_BUFFER_SIZE))
+  , tcp_client(new TcpClient<>(TCP_BUFFER_SIZE))
   , rx_timeout_timer(new Timer(RX_TIMEOUT_TIME, Timer::TYPE_PERIODIC))
   , con_timeout_timer(new Timer(CON_TIMEOUT_TIME, Timer::TYPE_PERIODIC))
   , keepalive_timer(new Timer(KEEPALIVE_TIMEOUT_TIME, Timer::TYPE_PERIODIC))
@@ -373,6 +373,13 @@ std::string QsoFrn::stateToString(State state)
 int QsoFrn::writeSamples(const float *samples, int count)
 {
   //cout << __FUNCTION__ << " " << count << endl;
+
+  if (state == STATE_IDLE)
+  {
+    sendRequest(RQ_TX0);
+    setState(STATE_TX_AUDIO_WAITING);
+  }
+
   int samples_read = 0;
   con_timeout_timer->reset();
 
@@ -438,8 +445,8 @@ void QsoFrn::squelchOpen(bool is_open)
 {
   if (is_open && state == STATE_IDLE)
   {
-    sendRequest(RQ_TX0);
-    setState(STATE_TX_AUDIO_WAITING);
+//    sendRequest(RQ_TX0);
+//    setState(STATE_TX_AUDIO_WAITING);
   }
 }
 
@@ -530,7 +537,7 @@ void QsoFrn::reconnect(void)
 {
   bool is_using_backup_server = (server == opt_server_backup && port == opt_port_backup);
 
-  reconnect_timeout_ms *= RECONNECT_BACKOFF;
+  reconnect_timeout_ms = static_cast<int>(reconnect_timeout_ms * RECONNECT_BACKOFF);
   if (reconnect_timeout_ms > RECONNECT_MAX_TIMEOUT) {
     reconnect_timeout_ms = RECONNECT_MAX_TIMEOUT;
   }

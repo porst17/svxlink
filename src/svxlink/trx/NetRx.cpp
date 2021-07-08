@@ -6,7 +6,7 @@
 
 \verbatim
 SvxLink - A Multi Purpose Voice Services System for Ham Radio Use
-Copyright (C) 2003-2008 Tobias Blomberg / SM0SVX
+Copyright (C) 2003-2018 Tobias Blomberg / SM0SVX
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -36,6 +36,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <cassert>
 #include <cstring>
 #include <cstdlib>
+#include <json/json.h>
 
 
 /****************************************************************************
@@ -133,8 +134,9 @@ class ToneDet
 NetRx::NetRx(Config &cfg, const string& name)
   : Rx(cfg, name), cfg(cfg), mute_state(Rx::MUTE_ALL), tcp_con(0),
     log_disconnects_once(false), log_disconnect(true),
-    last_signal_strength(0.0), last_sql_rx_id(0), unflushed_samples(false),
-    sql_is_open(false), audio_dec(0)
+    last_signal_strength(0.0), last_sql_rx_id(Rx::ID_UNKNOWN),
+    unflushed_samples(false), sql_is_open(false), audio_dec(0), fq(0),
+    modulation(Modulation::MOD_UNKNOWN)
 {
 } /* NetRx::NetRx */
 
@@ -187,7 +189,7 @@ bool NetRx::initialize(void)
   
   string auth_key;
   cfg.getValue(name(), "AUTH_KEY", auth_key);
-
+  
   string opt_prefix(audio_dec_name);
   opt_prefix += "_DEC_";
   list<string> names = cfg.listSection(name());
@@ -203,15 +205,14 @@ bool NetRx::initialize(void)
       dec_options[opt_name] = opt_value;
     }
   }
-
-  audio_dec = AudioDecoder::create(audio_dec_name,dec_options);
+  
+  audio_dec = AudioDecoder::create(audio_dec_name, dec_options);
   if (audio_dec == 0)
   {
     cerr << name() << ": *** ERROR: Illegal audio codec (" << audio_dec_name
           << ") specified for receiver " << name() << "\n";
     return false;
   }
-  audio_dec->printCodecParams();
   audio_dec->allEncodedSamplesFlushed.connect(
           mem_fun(*this, &NetRx::allEncodedSamplesFlushed));
 
@@ -226,9 +227,12 @@ bool NetRx::initialize(void)
   tcp_con->isReady.connect(mem_fun(*this, &NetRx::connectionReady));
   tcp_con->msgReceived.connect(mem_fun(*this, &NetRx::handleMsg));
   tcp_con->connect();
-  
+
+  squelchOpen.connect(
+      sigc::hide(sigc::mem_fun(*this, &NetRx::publishSquelchState)));
+
   return true;
-  
+
 } /* NetRx:initialize */
 
 
@@ -252,7 +256,7 @@ void NetRx::setMuteState(Rx::MuteState new_mute_state)
 
         case MUTE_ALL:  // MUTE_CONTENT -> MUTE_ALL
           last_signal_strength = 0.0;
-          last_sql_rx_id = 0;
+          last_sql_rx_id = Rx::ID_UNKNOWN;
           sql_is_open = false;
           if (!unflushed_samples)
           {
@@ -302,7 +306,7 @@ void NetRx::reset(void)
   
   mute_state = Rx::MUTE_ALL;
   last_signal_strength = 0;
-  last_sql_rx_id = 0;
+  last_sql_rx_id = Rx::ID_UNKNOWN;
   sql_is_open = false;
   
   if (unflushed_samples)
@@ -318,6 +322,22 @@ void NetRx::reset(void)
   sendMsg(msg);
 
 } /* NetRx::reset */
+
+
+void NetRx::setFq(unsigned fq)
+{
+  this->fq = fq;
+  MsgSetRxFq *msg = new MsgSetRxFq(fq);
+  sendMsg(msg);
+} /* NetRx::setFq */
+
+
+void NetRx::setModulation(Modulation::Type mod)
+{
+  modulation = mod;
+  MsgSetRxModulation *msg = new MsgSetRxModulation(mod);
+  sendMsg(msg);
+} /* NetRx::setModulation */
 
 
 
@@ -358,7 +378,19 @@ void NetRx::connectionReady(bool is_ready)
                                 (*it)->required_duration);
       sendMsg(msg);
     }
+
+    if (fq > 0)
+    {
+      MsgSetRxFq *msg = new MsgSetRxFq(fq);
+      sendMsg(msg);
+    }
     
+    if (modulation != Modulation::MOD_UNKNOWN)
+    {
+      MsgSetRxModulation *msg = new MsgSetRxModulation(modulation);
+      sendMsg(msg);
+    }
+
     MsgAudioCodecSelect *msg = new MsgRxAudioCodecSelect(audio_dec->name());
     string opt_prefix(audio_dec->name());
     opt_prefix += "_ENC_";
@@ -441,6 +473,7 @@ void NetRx::handleMsg(Msg *msg)
         last_signal_strength = sql_msg->signalStrength();
         last_sql_rx_id = sql_msg->sqlRxId();
         signalLevelUpdated(last_signal_strength);
+        publishSquelchState();
       }
       break;
     }
@@ -511,6 +544,27 @@ void NetRx::allEncodedSamplesFlushed(void)
     setSquelchState(false);
   }
 } /* NetRx::allEncodedSamplesFlushed */
+
+
+void NetRx::publishSquelchState(void)
+{
+  //std::cout << "### NetRx::publishSquelchState: " << std::endl;
+  float siglev = signalStrength();
+  Json::Value rx(Json::objectValue);
+  rx["name"] = name();
+  char rx_id = sqlRxId();
+  rx["id"] = std::string(&rx_id, &rx_id+1);
+  rx["sql_open"] = squelchIsOpen();
+  rx["siglev"] = static_cast<int>(siglev);
+  Json::StreamWriterBuilder builder;
+  builder["commentStyle"] = "None";
+  builder["indentation"] = ""; //The JSON document is written on a single line
+  Json::StreamWriter* writer = builder.newStreamWriter();
+  stringstream os;
+  writer->write(rx, &os);
+  delete writer;
+  publishStateEvent("Rx:sql_state", os.str());
+} /* NetRx::publishSquelchState */
 
 
 
